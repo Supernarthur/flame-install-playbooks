@@ -1,0 +1,230 @@
+---
+- hosts: install
+  vars:
+    config_path: "/Users/arthur/Projects/flame"
+
+  remote_user: root
+  tasks:
+
+    - name: Making sure /etc/sssd exists with the good permissions
+      file:
+        path: /etc/sssd
+        state: directory
+        mode: 0711
+        owner: sssd
+        group: sssd
+
+    - name: Copying sssd.conf template
+      copy:
+        src: "{{ config_path }}/sssd.conf"
+        dest: "/etc/sssd/sssd.conf"
+        mode: 0600
+        owner: root
+        group: root
+        backup: yes
+      register: sssd_result
+
+    - name: Restarting sssd if sssd.conf changed
+      service:
+        name: sssd
+        state: restarted
+      when: sssd_result|changed 
+
+    - name: Copying empty skeleton to /etc/skel
+      unarchive:
+        src: "{{ config_path }}/skel.tar"
+        dest: "/etc/skel"
+
+    - name: Copying flame icons to skeleton's desktop
+      unarchive: 
+        src: "{{ config_path }}/icons/icons_18_3_flame.tar"
+        dest: /etc/skel/Desktop
+        mode: 0711
+        owner: root
+        group: root
+      when: 
+        - (inventory_hostname[:5] == "flame") and (inventory_hostname[:11] != "flameassist") or (inventory_hostname[:3] == "flm")
+
+    - name: Copying flare icons to skeleton's desktop
+      unarchive: 
+        src: "{{ config_path }}/icons/icons_18_3_flare.tar"
+        dest: /etc/skel/Desktop
+        mode: 0711
+        owner: root
+        group: root
+      when: 
+        - inventory_hostname[:5] == "flare"
+
+    - name: Copying flameassist icons to skeleton's desktop
+      unarchive: 
+        src: "{{ config_path }}/icons/icons_18_3_flameassist.tar"
+        dest: /etc/skel/Desktop
+        mode: 0711
+        owner: root
+        group: root
+      when: 
+        - inventory_hostname[:11] == "flameassist"
+
+    - name: Copying Company's logo to /opt/autodesk-install
+      copy:
+        src: "{{ config_path }}/logo.png"
+        dest: "/opt/autodesk-install"
+
+    - name: Copying new swaggy kdmrc
+      copy:
+        src: "{{ config_path }}/kdmrc"
+        dest: "/etc/kde/kdm/kdmrc"
+        backup: yes
+
+    - name: Adding /Volumes line to /etc/auto.master
+      lineinfile:
+        path: "/etc/auto.master"
+        regexp: '^/Volumes'
+        line: "/Volumes	/etc/auto.master.d/auto.Volumes	browse"
+      register: auto_master
+
+    - name: Copying auto.Volumes to /etc/auto.master.d/
+      copy:
+        src: "{{ config_path }}/autofs/auto.Volumes"
+        dest: "/etc/auto.master.d/auto.Volumes"
+        mode: 0644
+        owner: root
+        group: root
+      register: auto_Volumes
+
+    - name: Changing timeout in autofs.conf to 10 min
+      lineinfile:
+        path: "/etc/autofs.conf"
+        regexp: '^timeout='
+        line: "timeout=600"
+      register: autofs_conf
+
+    - name: Copying credentials files to /usr/local/etc
+      unarchive:
+        src: "{{ config_path }}/../../.credentials/credentials-flame.tar"
+        dest: "/usr/local/etc"
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: Restarting autofs service if any modifications have been done
+      service: 
+        name: autofs
+        state: restarted
+      when: "auto_master|changed or auto_Volumes|changed or autofs_conf|changed"
+
+    - name: Adding flame_sudoers AD groups sudo rights (file in sudoers.d)
+      copy: 
+        src: "{{ config_path }}/flame_sudoers.conf"
+        dest: /etc/sudoers.d/flame_sudoers.conf
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Copying /etc/profile template
+      copy: 
+        src: "{{ config_path }}/profile"
+        dest: /etc/profile
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Copying /etc/bashrc template
+      copy: 
+        src: "{{ config_path }}/bashrc"
+        dest: /etc/bashrc
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Installing / updating zabbix-release
+      yum:
+        name: http://repo.zabbix.com/zabbix/3.0/rhel/7/x86_64/zabbix-release-3.0-1.el7.noarch.rpm
+        state: present
+
+    - name: Installing / updating zabbix-agent
+      yum:
+        name: zabbix-agent
+        state: present
+
+    - name: Changing hostname in zabbix-agent.conf
+      lineinfile: 
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^Hostname='
+        line: "Hostname={{ inventory_hostname }}"
+
+    - name: Changing server in zabbix-agent.conf
+      lineinfile: 
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^Server='
+        line: "Server=zabbix.ngt.nightshift.fr"
+
+    - name: Changing server active in zabbix-agent.conf
+      lineinfile: 
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^ServerActive='
+        line: "ServerActive=zabbix.ngt.nightshift.fr"
+
+    - name: Copying gpu-discovery script to /usr/local/bin
+      copy:
+        src: "{{ config_path }}/../zabbix/gpu-discovery.sh"
+        dest: "/usr/local/bin"
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Copying user parameters for nvidia zabbix template
+      copy: 
+        src: "{{ config_path }}/../zabbix/userparameter_nvidia.conf"
+        dest: "/etc/zabbix/zabbix_agentd.d/"
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Copying user parameters for mdraid zabbix template
+      copy: 
+        src: "{{ config_path }}/../zabbix/userparameter_mdraid.conf"
+        dest: "/etc/zabbix/zabbix_agentd.d/"
+        mode: 0644
+        owner: root
+        group: root
+
+    - name: Restarting zabbix-agent
+      service:
+        name: zabbix-agent
+        state: restarted
+
+    - name: Installing / updating epel
+      yum: 
+        name: epel-release
+        state: present
+
+    - name: Installing / updating htop
+      yum: 
+        name: htop
+        state: present
+
+    - name: Installing / updating fusioninventory-agent
+      yum: 
+        name: fusioninventory-agent
+        state: present
+
+    - name: Installing / updating fusioninventory-agent-task-inventory
+      yum: 
+        name: fusioninventory-agent-task-inventory
+        state: present
+
+    - name: Copying fusioninventory agent.conf template
+      copy:
+        src: "{{ config_path }}/agent.cfg"
+        dest: /etc/fusioninventory/agent.cfg
+        mode: 0644
+        owner: root
+        group: root
+        backup: yes
+
+    - name: (Re)Starting and loading fusioninventory-agent
+      service: 
+        name: fusioninventory-agent
+        state: started
+        enabled: yes

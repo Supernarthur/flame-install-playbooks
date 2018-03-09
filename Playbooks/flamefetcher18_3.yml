@@ -1,0 +1,148 @@
+---
+- hosts: adk, flmdev2, flmdev3, burn7, install
+  vars:
+    dku_name: "DKU_12.0.4"
+    dku_path: "2018.3/{{ dku_name }}.tar"
+    oldku_path: "2017.1_SP2/DKU_11.5.0.tar"
+    flame_nux_path: "2018.3/autodesk_flame_2018.3_LINUX64_CENTOS7.tar"
+    flare_nux_path: "2018.3/autodesk_flare_2018.3_LINUX64_CENTOS7.tar"
+    flass_nux_path: "2018.3/autodesk_flameassist_2018.3_LINUX64_CENTOS7.tar"
+    burn_path: "2018.3/autodesk_burn_2018.3_LINUX64_CENTOS7.tar"
+    truko_path: "/mnt/trukotek/AUTODESK/"
+    sapphire_path: "EXTRAS/linux/sparks/sapphire/genarts-sapphire-sparks8-8.150-1.x86_64.rpm"
+  remote_user: root
+  tasks:
+
+    - name: Unmounting trukotek
+      mount:
+        path: /mnt/trukotek
+        state: unmounted    
+
+    - name: Ensuring that /mnt/trukotek exists with good permissions
+      file: path=/mnt/trukotek state=directory owner=root mode=0775
+    
+    - name: Sending trukotek credential files
+      copy: src=/Users/arthur/.credentials/truko-credentials dest=/usr/local/etc/
+    
+    - name: Mounting trukotek
+      mount: 
+        path: /mnt/trukotek 
+        src: //scality3/trukotek 
+        fstype: cifs
+        opts: rw,suid,credentials=/usr/local/etc/truko-credentials,uid=0,gid=100,file_mode=0775,dir_mode=0775,soft,noauto
+        state: mounted
+    
+    - name: Ensuring that /opt/autodesk-install exists
+      file: path=/opt/autodesk-install state=directory owner=root mode=0775
+    
+    - name: Extracting DKU to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ dku_path }}
+        dest: /opt/autodesk-install/
+      when: ansible_distribution == "CentOS"
+
+    - name: Extracting older DKU to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ oldku_path }}
+        dest: /opt/autodesk-install/
+      when: ansible_distribution == "CentOS"
+
+    - name: Extracting flame to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ flame_nux_path }}
+        dest: /opt/autodesk-install/
+      when: 
+        - (inventory_hostname[:5] == "flame") and (inventory_hostname[:11] != "flameassist") or (inventory_hostname[:3] == "flm")
+        - ansible_os_family == "RedHat"
+
+    - name: Extracting flare to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ flare_nux_path }}
+        dest: /opt/autodesk-install/
+      when: 
+        - inventory_hostname[:5] == "flare"
+        - ansible_os_family == "RedHat"
+
+    - name: Extracting flameassist to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ flass_nux_path }}
+        dest: /opt/autodesk-install/
+      when: 
+        - inventory_hostname[:11] == "flameassist"
+        - ansible_os_family == "RedHat"
+
+    - name: Extracting burn to /opt/autodesk-install
+      unarchive: 
+        remote_src: yes
+        src: /mnt/trukotek/AUTODESK/{{ burn_path }}
+        dest: /opt/autodesk-install/
+      when: 
+        - (inventory_hostname[:4] == "burn") or (inventory_hostname[:5] == "flash")
+        - ansible_os_family == "RedHat"
+
+    - name: Deleting older nVidia driver in DKU
+      file:
+        path: /opt/autodesk-install/{{ dku_name }}/bin/system_rpm/NVIDIA-Linux-x86_64-346.35-custom.run
+        state: absent
+
+    - name: Creation symlink for nVidia driver
+      file: 
+        path: /opt/autodesk-install/{{ dku_name }}/bin/system_rpm/NVIDIA-Linux-x86_64-346.35-custom.run
+        state: link
+        src: /opt/autodesk-install/{{ dku_name }}/bin/system_rpm/NVIDIA-Linux-x86_64-361.28-custom.run
+
+    - name: Deleting wacom driver
+      file:
+        path: /opt/autodesk-install/{{ dku_name }}/bin/system_rpm/3.10.0-327.el7.x86_64/inputwacom-kmdl-3.10.0-327.el7.x86_64-0.34.0-1.x86_64.rpm
+        state: absent
+
+    - name: Removing beep
+      lineinfile: 
+        path: /etc/modprobe.d/bell.conf
+        line: "blacklist pcspkr"
+        create: yes
+
+    - name: Copying sapphire rpm to /opt/autodesk-install
+      copy:
+        remote_src: yes
+        src: "{{ truko_path }}{{ sapphire_path }}"
+        dest: /opt/autodesk-install/
+
+    - name: Making sure /usr/discreet/sparks is present with good permissions
+      file:
+        path: "/usr/discreet/sparks"
+        state: directory
+        mode: 0777
+        owner: root
+
+    - name: Installing sapphire_8 with silent mode
+      yum:
+        name: "/opt/autodesk-install/genarts-sapphire-sparks8-8.150-1.x86_64.rpm"
+        state: present
+      environment:
+        SAPPHIRE_SILENT: 1
+
+    - name: Installing sapphire license file
+      copy:
+        src: "/Users/arthur/projects/flame/genarts_float.lic"
+        dest: "/usr/genarts/rlm/"
+
+    - name: Unmounting trukotek
+      mount:
+        path: /mnt/trukotek
+        state: unmounted
+
+    - name: Deleting trukotek mount info
+      mount:
+        path: /mnt/trukotek
+        state: absent
+
+    - name: Deleting trukotek credentials
+      file: 
+        path: /usr/local/etc/truko-credentials
+        state: absent
